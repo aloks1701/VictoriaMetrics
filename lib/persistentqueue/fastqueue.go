@@ -251,6 +251,28 @@ func (fq *FastQueue) MustReadBlock(dst []byte) ([]byte, bool) {
 	}
 }
 
+// MustReadInMemoryBlockBlocking reads the next block from the in-memory queue into dst and returns it.
+// It returns (dst, true) if a block was available, or (nil, false) if the in-memory queue is empty.
+// It blocks until a block is available or the stop deadline is exceeded, in which case it returns (dst, false).
+func (fq *FastQueue) MustReadInMemoryBlockBlocking(dst []byte) ([]byte, bool) {
+	fq.mu.Lock()
+	defer fq.mu.Unlock()
+
+	for {
+		if fq.stopDeadline > 0 && fasttime.UnixTimestamp() > fq.stopDeadline {
+			return dst, false
+		}
+		if len(fq.ch) > 0 {
+			return fq.mustReadInMemoryBlockLocked(dst), true
+		}
+		if fq.stopDeadline > 0 {
+			return dst, false
+		}
+		// There are no blocks. Wait for new block.
+		fq.cond.Wait()
+	}
+}
+
 // MustReadInMemoryBlock reads the next block from the in-memory queue into dst and returns it.
 // It returns (dst, true) if a block was available, or (nil, false) if the in-memory queue is empty.
 // It does not block waiting for new blocks.
