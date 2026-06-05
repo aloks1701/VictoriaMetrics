@@ -296,6 +296,7 @@ func TestSingleVMAgentDropOnOverload(t *testing.T) {
 		"-remoteWrite.disableOnDiskQueue=true",
 		// use only 1 worker to get a full queue faster
 		"-remoteWrite.queues=1",
+		"-remoteWrite.flushInterval=1ms",
 		// fastqueue size is roughly memory.Allowed() / len(urls) / *maxRowsPerBlock / 100
 		// Use very large maxRowsPerBlock to get fastqueue of minimal length(2).
 		// See initRemoteWriteCtxs function in remotewrite.go for details.
@@ -332,13 +333,21 @@ func TestSingleVMAgentDropOnOverload(t *testing.T) {
 	vmagent.APIV1ImportPrometheusNoWaitFlush(t, []string{
 		"foo_bar 1 1652169600000", // 2022-05-10T08:00:00Z
 	}, apptest.QueryOpts{})
-
 	waitFor(
 		func() bool {
 			return vmagent.RemoteWriteRequests(t, url1) == 1 && vmagent.RemoteWriteRequests(t, url2) == 1
 		},
 	)
-
+	// Wait until second request got flushed to remote write server
+	// since there are 2 indepent queues (general and in-memory) with minimal capacity of 1
+	vmagent.APIV1ImportPrometheusNoWaitFlush(t, []string{
+		"foo_bar 1 1652169600000", // 2022-05-10T08:00:00Z
+	}, apptest.QueryOpts{})
+	waitFor(
+		func() bool {
+			return vmagent.RemoteWriteRequests(t, url1) == 2 && vmagent.RemoteWriteRequests(t, url2) == 2
+		},
+	)
 	// Send 2 more requests, the first RW endpoint should receive everything, the second should add them to the queue
 	// since worker is busy with the first request.
 	for i := range 2 {
@@ -348,7 +357,7 @@ func TestSingleVMAgentDropOnOverload(t *testing.T) {
 
 		waitFor(
 			func() bool {
-				return vmagent.RemoteWriteRequests(t, url1) == 2+i && vmagent.RemoteWritePendingInmemoryBlocks(t, url2) == 1+i
+				return vmagent.RemoteWriteRequests(t, url1) == 3+i && vmagent.RemoteWritePendingInmemoryBlocks(t, url2) == 1+i
 			},
 		)
 	}
@@ -360,7 +369,7 @@ func TestSingleVMAgentDropOnOverload(t *testing.T) {
 
 	waitFor(
 		func() bool {
-			return vmagent.RemoteWriteRequests(t, url1) == 4 && vmagent.RemoteWriteSamplesDropped(t, url2) > 0
+			return vmagent.RemoteWriteRequests(t, url1) == 5 && vmagent.RemoteWriteSamplesDropped(t, url2) > 0
 		},
 	)
 }
