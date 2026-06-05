@@ -194,19 +194,12 @@ func (fq *FastQueue) tryWriteBlock(block []byte, ignoreDisabledPQ bool) bool {
 
 	isPQWriteAllowed := !fq.isPQDisabled || ignoreDisabledPQ
 
-	fq.flushInmemoryBlocksToFileIfNeededLocked()
-	if n := fq.pq.GetPendingBytes(); n > 0 {
-		// The file-based queue isn't drained yet. This means that in-memory queue cannot be used yet.
-		// So put the block to file-based queue.
-		if len(fq.ch) > 0 {
-			logger.Panicf("BUG: the in-memory queue must be empty when the file-based queue is non-empty; it contains %d pending bytes", n)
-		}
-		if !isPQWriteAllowed {
-			return false
-		}
-		fq.pq.MustWriteBlock(block)
-		return true
+	if !isPQWriteAllowed && fq.pq.GetPendingBytes() > 0 {
+		// fast path there is pending data at file-based queue,
+		// it must be drained before in-memory queue could be used.
+		return false
 	}
+	fq.flushInmemoryBlocksToFileIfNeededLocked()
 	if len(fq.ch) == cap(fq.ch) {
 		// There is no space left in the in-memory queue. Put the data to file-based queue.
 		if !isPQWriteAllowed {
@@ -216,7 +209,7 @@ func (fq *FastQueue) tryWriteBlock(block []byte, ignoreDisabledPQ bool) bool {
 		fq.pq.MustWriteBlock(block)
 		return true
 	}
-	// Fast path - put the block to in-memory queue.
+
 	bb := blockBufPool.Get()
 	bb.B = append(bb.B[:0], block...)
 	fq.ch <- bb
@@ -239,16 +232,15 @@ func (fq *FastQueue) MustReadBlock(dst []byte) ([]byte, bool) {
 		if fq.stopDeadline > 0 && fasttime.UnixTimestamp() > fq.stopDeadline {
 			return dst, false
 		}
-		if len(fq.ch) > 0 {
-			return fq.mustReadInMemoryBlockLocked(dst), true
-		}
 		if n := fq.pq.GetPendingBytes(); n > 0 {
 			data, ok := fq.pq.MustReadBlockNonblocking(dst)
 			if ok {
 				return data, true
 			}
 			dst = data
-			continue
+		}
+		if len(fq.ch) > 0 {
+			return fq.mustReadInMemoryBlockLocked(dst), true
 		}
 		if fq.stopDeadline > 0 {
 			return dst, false
@@ -276,9 +268,6 @@ func (fq *FastQueue) MustReadInMemoryBlock(dst []byte) ([]byte, bool) {
 func (fq *FastQueue) mustReadInMemoryBlockLocked(dst []byte) []byte {
 	if len(fq.ch) == 0 {
 		logger.Panicf("BUG: the function must not be called when in-memory queue is empty. Caller should verify the queue len upfront")
-	}
-	if n := fq.pq.GetPendingBytes(); n > 0 {
-		logger.Panicf("BUG: the file-based queue must be empty when the in-memory queue is non-empty; it contains %d pending bytes", n)
 	}
 	bb := <-fq.ch
 	fq.pendingInmemoryBytes -= uint64(len(bb.B))
