@@ -197,9 +197,10 @@ func (fq *FastQueue) tryWriteBlock(block []byte, ignoreDisabledPQ bool) bool {
 	if !isPQWriteAllowed && fq.pq.GetPendingBytes() > 0 {
 		// fast path there is pending data at file-based queue,
 		// it must be drained before in-memory queue could be used.
+		// File-based queue could be non-empty after vmagent restart
+		// and vmagent couldn't flush in-memory queue during shutdown.
 		return false
 	}
-	fq.flushInmemoryBlocksToFileIfNeededLocked()
 	if len(fq.ch) == cap(fq.ch) {
 		// There is no space left in the in-memory queue. Put the data to file-based queue.
 		if !isPQWriteAllowed {
