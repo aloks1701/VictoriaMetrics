@@ -130,16 +130,6 @@ func (fq *FastQueue) MustClose() {
 	logger.Infof("closed fast persistent queue at %q", fq.pq.dir)
 }
 
-func (fq *FastQueue) flushInmemoryBlocksToFileIfNeededLocked() {
-	if len(fq.ch) == 0 || fq.isPQDisabled {
-		return
-	}
-	if fasttime.UnixTimestamp() < fq.lastInmemoryBlockReadTime+5 {
-		return
-	}
-	fq.flushInmemoryBlocksToFileLocked()
-}
-
 func (fq *FastQueue) flushInmemoryBlocksToFileLocked() {
 	// fq.mu must be locked by the caller.
 	for len(fq.ch) > 0 {
